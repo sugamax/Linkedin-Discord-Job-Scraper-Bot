@@ -1,0 +1,74 @@
+job_hunting_configs:
+  # analysts
+  - name: "Data Analyst Jobs Remote US"
+    icon: "📊" 
+    search_terms:
+      - "manager, data analytics"
+      - "data analyst"
+      - "data analytics"      
+    mandatory_terms:
+      - "manager"
+    location: "United States" 
+    is_remote: True
+    discord_channel_id: 1373875080920039497
+    blacklist_companies: []
+  - name: "Data Analyst Jobs Colorado"
+    icon: "📊" 
+    search_terms:
+      - "manager, data analytics"    
+      - "data analyst"
+      - "data analytics"
+    mandatory_terms:
+      - "manager"
+    location: "Colorado"
+    discord_channel_id: 1373875080920039497
+    blacklist_companies: []    
+  # engs
+  - name: "Software Engineering Jobs Remote US"
+    icon: "👨‍💻" 
+    search_terms:
+      - "staff software engineer"
+      - "lead software engineer"
+      - "principal software engineer"
+    mandatory_terms:
+      - "software engineer"
+    location: "United States" 
+    is_remote: True
+    discord_channel_id: 1373874983037702285
+    blacklist_companies: [] 
+  - name: "Software Engineering Jobs Colorad"
+    icon: "👨‍💻" 
+    search_terms:
+      - "staff software engineer"
+      - "lead software engineer"
+      - "principal software engineer"
+    mandatory_terms:
+      - "software engineer"
+    location: "Colorado" 
+    discord_channel_id: 1373874983037702285
+    blacklist_companies: []   
+  # managerss
+  - name: "Engineering Manager Jobs Remote US"
+    icon: "👨‍💼" 
+    search_terms:
+      - "software engineering manager"
+      - "director of software engineering"
+    mandatory_terms:
+      - "manager"
+      - "director"
+    location: "United States" 
+    is_remote: True
+    discord_channel_id: 1373875158116470874
+    blacklist_companies: [] 
+  - name: "Engineering Manager Jobs Colorado"
+    icon: "👨‍💼" 
+    search_terms:
+      - "software engineering manager"
+      - "director of software engineering"
+    mandatory_terms:
+      - "manager"
+      - "director"
+    location: "Colorado" 
+    discord_channel_id: 1373875158116470874
+    blacklist_companies: []           
+    

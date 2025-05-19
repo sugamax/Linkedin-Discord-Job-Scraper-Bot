@@ -2,22 +2,52 @@ import logging
 import os
 import platform
 import random
+from typing import Dict, List
+import json
+from datetime import datetime, date, time
+from dotenv import load_dotenv
+import pytz
+import argparse
 
+import yaml
 from jobspy import scrape_jobs
 import discord
 from discord.ext import commands, tasks
-from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import Column, Integer, String
 
-intents = discord.Intents.default()
+# Parse command line arguments
+parser = argparse.ArgumentParser(description='Discord Job Hunter Bot')
+parser.add_argument('--run-now', action='store_true', help='Run job search immediately on startup')
+args = parser.parse_args()
 
+# Load environment variables
+load_dotenv()
+
+# Load config at module level
+try:
+    with open('config.yaml', 'r') as file:
+        CONFIG = yaml.safe_load(file)
+    
+    # Get Discord token from environment variable
+    discord_token = os.getenv('DISCORD_TOKEN')
+    if not discord_token:
+        raise ValueError("DISCORD_TOKEN environment variable is not set")
+    
+    # Validate token format
+    if len(discord_token) < 50:
+        raise ValueError("Discord token appears to be invalid. Please check your .env file")
+except Exception as e:
+    print(f"Error loading configuration: {str(e)}")
+    raise
+
+intents = discord.Intents.default()
 Base = declarative_base()
 
-class FullTimeJob(Base):
-    __tablename__ = "full_time_jobs"
+class Job(Base):
+    __tablename__ = "jobs"
 
     id = Column(Integer, primary_key=True)
     description = Column(String)
@@ -27,42 +57,24 @@ class FullTimeJob(Base):
     company_name = Column(String)
     company_url = Column(String)
     location = Column(String)
+    job_type = Column(String)  # To store which job config this belongs to
 
-class InternJob(Base):
-    __tablename__ = "intern_jobs"
+class JobConfig:
+    def __init__(self, config: Dict):
+        self.name = config['name']
+        self.icon = config.get('icon', '💼')  # Default to briefcase if no icon specified
+        self.search_terms = config['search_terms']
+        self.mandatory_terms = config['mandatory_terms']
+        self.location = config.get('location', 'United States')  # Default to United States if not specified
+        self.is_remote = config.get('is_remote', False)  # Default to False if not specified
+        self.discord_channel_id = config['discord_channel_id']
+        self.blacklist_companies = set(config['blacklist_companies'])
+        self.current_search_index = 0
 
-    id = Column(Integer, primary_key=True)
-    description = Column(String)
-    job_id = Column(String, unique=True)
-    application_url = Column(String)
-    job_title = Column(String)
-    company_name = Column(String)
-    company_url = Column(String)
-    location = Column(String)
-
-class NG2025Job(Base):
-    __tablename__ = "ng_2025_jobs"
-
-    id = Column(Integer, primary_key=True)
-    description = Column(String)
-    job_id = Column(String, unique=True)
-    application_url = Column(String)
-    job_title = Column(String)
-    company_name = Column(String)
-    company_url = Column(String)
-    location = Column(String)
-
-class NG2024Job(Base):
-    __tablename__ = "ng_2024_jobs"
-
-    id = Column(Integer, primary_key=True)
-    description = Column(String)
-    job_id = Column(String, unique=True)
-    application_url = Column(String)
-    job_title = Column(String)
-    company_name = Column(String)
-    company_url = Column(String)
-    location = Column(String)
+    def get_next_search_term(self) -> str:
+        term = self.search_terms[self.current_search_index]
+        self.current_search_index = (self.current_search_index + 1) % len(self.search_terms)
+        return term
 
 class LoggingFormatter(logging.Formatter):
     black = "\x1b[30m"
@@ -111,60 +123,8 @@ Base.metadata.create_all(engine)
 Session = sessionmaker(bind=engine)
 session = Session()
 
-blacklist_companies = {
-    'Team Remotely Inc',
-    'HireMeFast LLC',
-    'Get It Recruit - Information Technology',
-    "Offered.ai",
-    "4 Staffing Corp",
-    "myGwork - LGBTQ+ Business Community",
-    "Patterned Learning AI",
-    "Mindpal",
-    "Phoenix Recruiting",
-    "SkyRecruitment",
-    "Phoenix Recruitment",
-    "Patterned Learning Career",
-    "SysMind",
-    "SysMind LLC",
-    "Motion Recruitment"
-}
-
-bad_roles = {
-    "unpaid",
-    "senior",
-    "lead",
-    "manager",
-    "director",
-    "principal",
-    "vp",
-    "Sr.",
-    "Sr",
-    "Senior",
-    "Lead",
-    "Manager",
-    "Director",
-    "Principal",
-    "VP",
-    "sr.",
-    "Snr",
-    "II",
-    "III"
-}
-
-quarantined_2025_terms = {
-    '2024',
-    'intern',
-    'internship'
-}
-
-quarantined_2024_terms = {
-    '2025',
-    'intern',
-    'internship'
-}
-
 class DiscordBot(commands.Bot):
-    def __init__(self, s=None) -> None:
+    def __init__(self, s=None, run_now=False) -> None:
         super().__init__(
             command_prefix=None,
             intents=intents,
@@ -172,30 +132,25 @@ class DiscordBot(commands.Bot):
         )
         self.logger = logger
         self.session = s
+        self.job_configs = self.load_job_configs()
+        self.run_now = run_now
+        # Set Denver timezone
+        self.denver_tz = pytz.timezone('America/Denver')
+        self.check_time_task = self.check_time_task
 
-        self.ng_2024_search_terms = [
-            "new grad software engineer",
-            "recent graduate software engineer",
-            "junior software engineer"
-        ]
-        self.ng_2024_search_index = 0
-
-        self.ng_2025_search_terms = [
-            "2025 software engineer",
-            "new grad 2025 software engineer",
-            "software engineer recent graduate 2025",
-            "2025 Data Scientist",
-            "2025 Data Analyst",
-            "2025 Data Engineer"
-        ]
-        self.ng_2025_search_index = 0
+    def load_job_configs(self) -> List[JobConfig]:
+        return [JobConfig(cfg) for cfg in CONFIG['job_hunting_configs']]
 
     @tasks.loop(minutes=1.0)
-    async def status_task(self) -> None:
-        await self.change_presence(activity=discord.Game('with jobs! 🎉'))
+    async def check_time_task(self) -> None:
+        """Check if it's 9:30 AM Denver time"""
+        denver_time = datetime.now(self.denver_tz)
+        if denver_time.hour == 9 and denver_time.minute == 30:
+            self.logger.info("It's 9:30 AM Denver time - running job search")
+            await self.job_posting_task()
 
-    @status_task.before_loop
-    async def before_status_task(self) -> None:
+    @check_time_task.before_loop
+    async def before_check_time_task(self) -> None:
         await self.wait_until_ready()
 
     async def setup_hook(self) -> None:
@@ -206,129 +161,106 @@ class DiscordBot(commands.Bot):
             f"Running on: {platform.system()} {platform.release()} ({os.name})"
         )
         self.logger.info("-------------------")
-        self.status_task.start()
+        # Start the time check task
+        if not self.check_time_task.is_running():
+            self.check_time_task.start()
 
-    async def post_jobs(self, jobs, channel_id: int):
+    async def post_jobs(self, jobs, job_config: JobConfig):
+        channel_id = int(job_config.discord_channel_id)
         target_channel = self.get_channel(channel_id)
+        
         if target_channel is None:
-            self.logger.error(f"No channel with ID {channel_id} found.")
-        else:
-            if channel_id == int(os.getenv('FT_CHANNEL_ID')):
-                JobModel = FullTimeJob
-                quarantine_terms = set()
-                channel_name = "Full-Time Jobs"
-                required_terms = ["engineer", "technology", "developer", "software", "new grad", "entry level", "entry"]
-            elif channel_id == int(os.getenv('INTERN_CHANNEL_ID')):
-                JobModel = InternJob
-                quarantine_terms = set()
-                channel_name = "Intern Jobs"
-                required_terms = ["intern"]
-            elif channel_id == int(os.getenv('NG_2025_CHANNEL_ID')):
-                JobModel = NG2025Job
-                quarantine_terms = quarantined_2025_terms
-                channel_name = "NG 2025 Jobs"
-                required_terms = ["engineer", "technology", "developer", "software", "new grad", "entry level", "entry"]
-            elif channel_id == int(os.getenv('NG_2024_CHANNEL_ID')):
-                JobModel = NG2024Job
-                quarantine_terms = quarantined_2024_terms
-                channel_name = "NG 2024 Jobs"
-                required_terms = ["engineer", "technology", "developer", "software", "new grad", "entry level", "entry"]
-            else:
-                self.logger.error(f"Unknown channel ID: {channel_id}")
-                return
+            self.logger.error(f"No channel with ID {channel_id} found for {job_config.name}")
+            return
 
-            for index, row in jobs.iterrows():
-                if row['company'] in blacklist_companies:
-                    self.logger.info(
-                        f"Skipping job from blacklisted company: {row['company']} in channel: {channel_name} (ID: {channel_id})")
-                    continue
+        for index, row in jobs.iterrows():
+            if row['company'] in job_config.blacklist_companies:
+                self.logger.info(
+                    f"Skipping job from blacklisted company: {row['company']} for {job_config.name}")
+                continue
 
-                if not any(term.lower() in row['title'].lower() for term in required_terms):
-                    self.logger.info(
-                        f"Skipping job with title '{row['title']}' as it does not contain any of the required terms {required_terms} in channel: {channel_name} (ID: {channel_id})")
-                    continue
+            # Check if job title contains any mandatory terms
+            if not any(term.lower() in row['title'].lower() for term in job_config.mandatory_terms):
+                self.logger.info(
+                    f"Skipping job {row['title']} - doesn't contain mandatory terms for {job_config.name}")
+                continue
 
-                if any(term.lower() in row['title'].lower() for term in quarantine_terms):
-                    self.logger.info(
-                        f"Skipping job with quarantined term in title: {row['title']} in channel: {channel_name} (ID: {channel_id})")
-                    continue
+            query = self.session.query(Job).filter(Job.job_id == row['id']).first()
+            if query is None:
+                # Format job title with location and remote tags
+                job_title = row.get('title', 'Position Not Listed')
+                tags = []
+                
+                if job_config.location != "United States":
+                    tags.append("Local")
+                if job_config.is_remote:
+                    tags.append("Remote")
+                
+                if tags:
+                    job_title = f"[{'/'.join(tags)}] {job_title}"
+                    self.logger.info(f"Adding tags to job: {job_title} for config: {job_config.name}")
 
-                if any(term.lower() in row['title'].lower() for term in bad_roles):
-                    self.logger.info(
-                        f"Skipping job with bad role in title: {row['title']} in channel: {channel_name} (ID: {channel_id})")
-                    continue
-
-                query = self.session.query(JobModel).filter(JobModel.job_id == row['id']).first()
-                if query is None:
-                    job_info = f""">>> ## {''.join(random.choices(['🎉', '👏', '💼', '🔥', '💻'], k=1))} [{row['company']}](<{row['company_url']}>) just posted a new job! 
+                job_info = f""">>> ## {job_config.icon} [{row.get('company', 'Company Not Listed')}](<{row.get('company_url', '#')}>) just posted a new job! 
 
 ### **Role:** 
-[**{row['title']}**](<{row['job_url']}>)
+[**{job_title}**](<{row.get('job_url', '#')}>)
+
+### **Industry:**
+{row.get('company_industry', 'Industry Not Specified')}
 
 ### **Location:** 
-{row['location']}
+{row.get('location', 'Location Not Specified')}
+
+### **Remote Status:**
+{'🏠 Remote' if row.get('is_remote') else '🏢 On-site/Not Specified'}
+
+### **Posted:**
+{row.get('date_posted', 'Date Not Specified')}
 ---
-                    """
-                    self.logger.info(f"Posting job: {row['title']} to channel: {channel_name} (ID: {channel_id})")
-                    self.session.add(JobModel(job_id=row['id'], application_url=row['job_url'], job_title=row['title'],
-                                              company_name=row['company'], company_url=row['company_url']))
-                    await target_channel.send(job_info)
-                else:
-                    self.logger.info(
-                        f"Job already exists in the database: {row['title']} in channel: {channel_name} (ID: {channel_id})")
+                """
+                self.logger.info(f"Posting job: {job_title} for {job_config.name}")
+                self.session.add(Job(
+                    job_id=row['id'],
+                    application_url=row['job_url'],
+                    job_title=job_title,
+                    company_name=row['company'],
+                    company_url=row['company_url'],
+                    location=row['location'],
+                    job_type=job_config.name
+                ))
+                await target_channel.send(job_info)
+            else:
+                self.logger.info(f"Job already exists in the database: {row['title']}")
 
-    @tasks.loop(seconds=0)
     async def job_posting_task(self):
-        import asyncio
-        await self.full_time_job_task()
-        await asyncio.sleep(10)
-        await self.ng_2025_job_task()
-        await asyncio.sleep(10)
-        await self.ng_2024_job_task()
-        await asyncio.sleep(10)
-        await self.intern_job_task()
-        self.logger.info("Job posting task completed.")
-
-    async def full_time_job_task(self):
-        channel_id = int(os.getenv('FT_CHANNEL_ID'))
-        full_time_jobs = await self.get_jobs(search_term="software engineer", results_wanted=20)
-        await self.post_jobs(full_time_jobs, channel_id)
-
-    async def intern_job_task(self):
-        channel_id = int(os.getenv('INTERN_CHANNEL_ID'))
-        intern_jobs = await self.get_jobs(hours_old=10)
-        await self.post_jobs(intern_jobs, channel_id)
-
-    async def ng_2025_job_task(self):
-        channel_id = int(os.getenv('NG_2025_CHANNEL_ID'))
-        ng_2025_search_term = self.ng_2025_search_terms[self.ng_2025_search_index]
-
-        self.logger.info(
-            f"Running NG 2025 job task for channel ID: {channel_id} with search term '{ng_2025_search_term}'")
-        jobs = await self.get_jobs(search_term=ng_2025_search_term, hours_old=10)
-        self.logger.info(f"Found {len(jobs)} jobs for NG 2025 channel using '{ng_2025_search_term}'.")
-
-        await self.post_jobs(jobs, channel_id)
-        self.ng_2025_search_index = (self.ng_2025_search_index + 1) % len(self.ng_2025_search_terms)
-
-    async def ng_2024_job_task(self):
-        channel_id = int(os.getenv('NG_2024_CHANNEL_ID'))
-        current_search_term = self.ng_2024_search_terms[self.ng_2024_search_index]
-
-        self.logger.info(
-            f"Running NG 2024 job task for channel ID: {channel_id} with search term '{current_search_term}'")
-        jobs = await self.get_jobs(search_term=current_search_term, hours_old=10)
-        self.logger.info(f"Found {len(jobs)} jobs for NG 2024 channel using '{current_search_term}'.")
-
-        await self.post_jobs(jobs, channel_id)
-        self.ng_2024_search_index = (self.ng_2024_search_index + 1) % len(self.ng_2024_search_terms)
+        for job_config in self.job_configs:
+            search_term = job_config.get_next_search_term()
+            self.logger.info(
+                f"Searching for {job_config.name} with term: {search_term} in {job_config.location} "
+                f"({'remote only' if job_config.is_remote else 'all locations'})"
+            )
+            
+            try:
+                jobs = await self.get_jobs(
+                    search_term=search_term,
+                    location=job_config.location,
+                    is_remote=job_config.is_remote
+                )
+                            
+                await self.post_jobs(jobs, job_config)
+            except Exception as e:
+                self.logger.error(f"Error processing {job_config.name}: {str(e)}")
+                continue
 
     async def on_ready(self):
-        print('ready')
-        self.job_posting_task.start()
+        print('Bot is ready!')
+        # Run immediately if --run-now flag was specified
+        if self.run_now:
+            self.logger.info("--run-now flag specified, running job search immediately")
+            await self.job_posting_task()
 
-    async def get_jobs(self, sites=None, search_term='software engineer intern', location='United States',
-                       results_wanted=15, hours_old=1):
+    async def get_jobs(self, sites=None, search_term='', location='United States',
+                       results_wanted=20, hours_old=72, is_remote=False):
         if sites is None:
             sites = ['linkedin']
         jobs = scrape_jobs(
@@ -337,9 +269,45 @@ class DiscordBot(commands.Bot):
             location=location,
             results_wanted=results_wanted,
             hours_old=hours_old,
+            is_remote=is_remote,
+            linkedin_fetch_description=True,
         )
         return jobs
 
-load_dotenv()
-bot = DiscordBot(s=session)
-bot.run(os.getenv("TOKEN"))
+    def format_salary(self, row):
+        try:
+            job_function = row.get('job_function', {})
+            if not job_function:
+                return "Not Specified"
+            
+            min_amount = job_function.get('min_amount')
+            max_amount = job_function.get('max_amount')
+            interval = job_function.get('interval', '')
+            
+            if min_amount and max_amount:
+                return f"${min_amount:,} - ${max_amount:,} {interval}"
+            elif min_amount:
+                return f"${min_amount:,}+ {interval}"
+            elif max_amount:
+                return f"Up to ${max_amount:,} {interval}"
+            else:
+                return "Not Specified"
+        except Exception:
+            return "Not Specified"
+
+    async def close(self):
+        """Clean up when the bot is shutting down"""
+        if self.check_time_task.is_running():
+            self.check_time_task.cancel()
+        await super().close()
+
+try:
+    bot = DiscordBot(s=session, run_now=args.run_now)
+    print("Starting bot...")
+    bot.run(discord_token)
+except discord.errors.LoginFailure as e:
+    print("Failed to login to Discord. Please check if your token is valid.")
+    print("Error:", str(e))
+except Exception as e:
+    print(f"An unexpected error occurred: {str(e)}")
+    raise

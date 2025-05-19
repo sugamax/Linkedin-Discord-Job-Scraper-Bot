@@ -8,7 +8,7 @@ beautifulsoup4==4.12.3
 certifi==2024.8.30
 charset-normalizer==3.4.0
 discord==2.3.2
-discord.py==2.4.0
+discord.py>=2.0.0
 frozenlist==1.5.0
 idna==3.10
 markdownify==0.13.1
@@ -20,15 +20,16 @@ pydantic==2.9.2
 pydantic_core==2.23.4
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
-python-jobspy==1.1.75
+python-jobspy>=0.4.0
 pytz==2024.2
 regex==2024.11.6
 requests==2.32.3
 six==1.16.0
 soupsieve==2.6
-SQLAlchemy==2.0.36
+SQLAlchemy>=2.0.0
 tls-client==1.0.1
 typing_extensions==4.12.2
 tzdata==2024.2
 urllib3==2.2.3
 yarl==1.17.2
+PyYAML>=6.0.1

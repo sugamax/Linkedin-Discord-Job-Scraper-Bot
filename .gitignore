@@ -1,5 +1,7 @@
 .env
 venv
 discord.log
+bot.log
+bot.error.log
 jobs.db
 jobs.db-journal
