@@ -1,0 +1,12 @@
+[Unit]
+Description=Job Hunter Bot Timer
+Requires=job-hunter.service
+
+[Timer]
+# Run at 9:30 AM Mountain Time
+OnCalendar=*-*-* 09:30:00
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target 

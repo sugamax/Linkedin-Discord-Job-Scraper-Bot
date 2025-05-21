@@ -1,18 +1,14 @@
 [Unit]
-Description=LinkedIn Job Hunter Discord Bot
+Description=Job Hunter Bot Service
 After=network.target
 
 [Service]
 Type=simple
 User=ec2-user
 WorkingDirectory=/home/ec2-user/job-hunter/Linkedin-Discord-Job-Scraper-Bot
-ExecStartPre=/usr/bin/python3.11 -m venv venv
-ExecStartPre=/home/ec2-user/job-hunter/Linkedin-Discord-Job-Scraper-Bot/venv/bin/pip install -r requirements.txt
-ExecStart=/home/ec2-user/job-hunter/Linkedin-Discord-Job-Scraper-Bot/venv/bin/python /home/ec2-user/job-hunter/Linkedin-Discord-Job-Scraper-Bot/bot.py
-Restart=always
+ExecStart=/usr/bin/python3.11 bot.py --run-now
+Restart=on-failure
 RestartSec=10
-StandardOutput=append:/home/ec2-user/job-hunter/Linkedin-Discord-Job-Scraper-Bot/bot.log
-StandardError=append:/home/ec2-user/job-hunter/Linkedin-Discord-Job-Scraper-Bot/bot.error.log
 
 [Install]
 WantedBy=multi-user.target 
