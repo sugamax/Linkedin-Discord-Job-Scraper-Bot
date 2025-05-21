@@ -1,7 +1,6 @@
 # LinkedIn Job Hunter Discord Bot
 
-### Forked  from https://github.com/haydenthai/Linkedin-Discord-Job-Scraper-Bot
-
+### Forked from https://github.com/haydenthai/Linkedin-Discord-Job-Scraper-Bot
 
 A Discord bot that automatically scrapes LinkedIn for job postings and posts them to specified Discord channels. The bot supports multiple job configurations, remote/local filtering, and runs on a schedule.
 
@@ -10,11 +9,12 @@ A Discord bot that automatically scrapes LinkedIn for job postings and posts the
 - 🔍 Multiple job search configurations
 - 🌍 Location-based filtering (US-wide and specific locations)
 - 🏠 Remote job filtering
-- ⏰ Daily run at 9AM
+- ⏰ Daily run at 9:30 AM Denver time
 - 🏷️ Automatic tagging of jobs ([Local], [Remote])
 - 📊 Job deduplication
 - 📝 Detailed job postings with company info
 - 🔄 Automatic daily updates
+- 🛡️ Systemd service and timer for reliable scheduling
 
 ## Setup
 
@@ -66,7 +66,7 @@ python bot.py --run-now
 ```
 
 ### Systemd Service (Recommended)
-1. Install the service:
+1. Install the service and timer:
 ```bash
 chmod +x install-service.sh
 ./install-service.sh
@@ -84,8 +84,11 @@ tail -f bot.error.log
 
 3. Service management:
 ```bash
-# Check status
+# Check service status
 sudo systemctl status job-hunter
+
+# Check timer status
+sudo systemctl status job-hunter.timer
 
 # Stop service
 sudo systemctl stop job-hunter
@@ -95,6 +98,9 @@ sudo systemctl start job-hunter
 
 # Restart service
 sudo systemctl restart job-hunter
+
+# Restart timer
+sudo systemctl restart job-hunter.timer
 ```
 
 ## Configuration
@@ -117,18 +123,21 @@ Jobs are posted with:
 - Industry
 - Location
 - Remote status
-- Posted date
+- Posted date (when available)
 
 ## Recent Changes
 
 - Added [Local] and [Remote] tags to job titles
-- Implemented scheduled runs at 9:30 AM Denver time
-- Added systemd service for automated running
+- Implemented scheduled runs at 9:30 AM Denver time using systemd timer
+- Added systemd service and timer for automated running
 - Moved Discord token to .env file
 - Added support for multiple job configurations
 - Improved logging and error handling
 - Added job deduplication
 - Added blacklist company support
+- Improved job posting format with optional posting date
+- Enhanced error handling and logging
+- Added support for mandatory terms in job titles
 
 ## Contributing
 
