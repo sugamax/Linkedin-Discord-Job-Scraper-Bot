@@ -12,13 +12,13 @@ job_hunting_configs:
     blacklist_companies:
       - "Company1"
       - "Company2"
-  - name: "Data Analyst Jobs Colorado"
+  - name: "Data Analyst Jobs Local"
     icon: "🗻"
     search_terms:
       - "data analyst"
     mandatory_terms:
       - "analyst"
-    location: "Colorado"
+    location: "Los Amigos"
     is_remote: false
     discord_channel_id: "YOUR_DISCORD_CHANNEL_ID"
     blacklist_companies: [] 
