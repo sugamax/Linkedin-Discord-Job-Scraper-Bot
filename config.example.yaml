@@ -1,0 +1,24 @@
+job_hunting_configs:
+  - name: "Data Analyst Jobs Remote US"
+    icon: "🧑‍💻"
+    search_terms:
+      - "data analyst"
+      - "business analyst"
+    mandatory_terms:
+      - "analyst"
+    location: "United States"
+    is_remote: true
+    discord_channel_id: "YOUR_DISCORD_CHANNEL_ID"
+    blacklist_companies:
+      - "Company1"
+      - "Company2"
+  - name: "Data Analyst Jobs Colorado"
+    icon: "🗻"
+    search_terms:
+      - "data analyst"
+    mandatory_terms:
+      - "analyst"
+    location: "Colorado"
+    is_remote: false
+    discord_channel_id: "YOUR_DISCORD_CHANNEL_ID"
+    blacklist_companies: [] 

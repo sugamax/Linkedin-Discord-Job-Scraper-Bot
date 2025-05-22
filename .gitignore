@@ -5,3 +5,4 @@ bot.log
 bot.error.log
 jobs.db
 jobs.db-journal
+config.yaml
