@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqlalchemy import Column, Integer, String
+import urllib.parse
 
 import yaml
 from jobspy import scrape_jobs
@@ -186,121 +187,121 @@ class DiscordBot(commands.Bot):
 
         session = self.session_factory()
         try:
-            for index, row in jobs.iterrows():
+            # Convert jobs DataFrame to list of dictionaries and sort by company name
+            jobs_list = jobs.to_dict('records')
+            jobs_list.sort(key=lambda x: x.get('company', '').lower())
+
+            # Group jobs by company
+            from collections import defaultdict
+            company_jobs = defaultdict(list)
+            for row in jobs_list:
                 if row['company'] in job_config.blacklist_companies:
                     self.logger.info(
                         f"Skipping job from blacklisted company: {row['company']} for {job_config.name}")
                     continue
-
                 # Check if job title contains any mandatory terms
                 if not any(term.lower() in row['title'].lower() for term in job_config.mandatory_terms):
                     self.logger.info(
                         f"Skipping job {row['title']} - doesn't contain mandatory terms for {job_config.name}")
                     continue
+                company_jobs[row['company']].append(row)
 
-                # Retry mechanism for database operations
-                max_retries = 3
-                retry_delay = 1
-                
-                for attempt in range(max_retries):
-                    try:
-                        # Check if job was already posted to this channel by checking the job URL
-                        query = session.query(Job).filter(
-                            Job.application_url == row['job_url'],
-                            Job.job_type == job_config.name
-                        ).first()
-                        
-                        if query is None:
-                            # Check if job exists in any channel
-                            existing_job = session.query(Job).filter(
-                                Job.job_id == row['id']
-                            ).first()
-                            
-                            if existing_job is None:
-                                # Get the job title without tags
-                                job_title = row.get('title', 'Position Not Listed')
-                                
-                                # Determine remote/local status
-                                is_remote = row.get('is_remote', False)
-                                is_local = job_config.location != "United States"
-                                
-                                # Format the status text
-                                status = []
-                                if is_remote:
-                                    status.append("🏠 Remote")
-                                if is_local:
-                                    status.append("📍 Local")
-                                if not status:
-                                    status.append("🏢 On-site")
-
-                                location = row.get('location', '').strip()
-                                status_str = ' | '.join(status)
-                                if location:
-                                    info_line = f"{location} | {status_str}"
-                                else:
-                                    info_line = status_str
-
-                                # Format the date if it exists and is not NaN
-                                date_str = ''
-                                if row.get('date_posted') and str(row['date_posted']).lower() != 'nan':
-                                    try:
-                                        if isinstance(row['date_posted'], (datetime, date)):
-                                            date_str = f" • Posted: {row['date_posted'].strftime('%Y-%m-%d')}"
-                                        else:
-                                            date_str = f" • Posted: {str(row['date_posted'])}"
-                                    except Exception as e:
-                                        self.logger.warning(f"Error formatting date for job {row.get('title')}: {str(e)}")
-                                        date_str = ''
-
-                                job_info = f""">>> ## {job_config.icon} [{row.get('company', 'Company Not Listed')}](<{row.get('company_url', '#')}>)
-
-[**{job_title}**](<{row.get('job_url', '#')}>) | {info_line}
-
-{row.get('company_industry', 'Industry Not Specified')}{date_str}
----
-                                """
-                                self.logger.info(f"Posting job: {job_title} for {job_config.name}")
-                                
-                                # Create new job entry
-                                new_job = Job(
-                                    job_id=row['id'],
-                                    application_url=row['job_url'],
-                                    job_title=job_title,
-                                    company_name=row['company'],
-                                    company_url=row['company_url'],
-                                    location=row['location'],
-                                    job_type=job_config.name
-                                )
-                                
-                                # Add to session and commit immediately
-                                session.add(new_job)
-                                session.commit()
-                                
-                                # Send message after successful database operation
-                                await target_channel.send(job_info)
-                                # Add 1 second delay between messages
-                                await asyncio.sleep(1)
+            for company, jobs_for_company in company_jobs.items():
+                # Batch jobs in groups of 5
+                for i in range(0, len(jobs_for_company), 5):
+                    batch = jobs_for_company[i:i+5]
+                    # Use the first job for company info
+                    first_row = batch[0]
+                    company_urls = get_company_urls(company)
+                    job_lines = []
+                    for row in batch:
+                        # Determine remote/local status
+                        is_remote = row.get('is_remote', False)
+                        is_local = job_config.location != "United States"
+                        status = []
+                        if is_remote:
+                            status.append("🏠 Remote")
+                        if is_local:
+                            status.append("📍 Local")
+                        if not status:
+                            status.append("🏢 On-site")
+                        location = row.get('location', '').strip()
+                        status_str = ' | '.join(status)
+                        if location:
+                            if is_local:
+                                # Remove 'Local' from status_str, add '| 📍 Local' at the end
+                                status_str_clean = status_str.replace('Local', '').strip()
+                                info_line = f"{location} | 📍 Local"
                             else:
-                                # Job exists in another channel, update job_type to include this channel
-                                if job_config.name not in existing_job.job_type:
-                                    existing_job.job_type = f"{existing_job.job_type}, {job_config.name}"
-                                    session.commit()
-                                    self.logger.info(f"Updated job_type for existing job {row['title']} to include {job_config.name}")
+                                info_line = f"{location} | {status_str.replace('🏢 On-site', 'On-site')}"
                         else:
-                            self.logger.info(f"Job already posted to channel {job_config.name}: {row['title']}")
-                        
-                        # If we get here, the operation was successful
-                        break
-                        
-                    except OperationalError as e:
-                        if attempt < max_retries - 1:
-                            self.logger.warning(f"Database locked, retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
-                            time.sleep(retry_delay)
-                            retry_delay *= 2  # Exponential backoff
-                            session.rollback()
-                        else:
-                            raise
-                    
+                            info_line = f"{status_str.replace('🏢 On-site', 'On-site')}" if status_str.startswith('🏢 On-site') else status_str
+                        # Format the date if it exists and is not NaN
+                        date_str = ''
+                        if row.get('date_posted') and str(row['date_posted']).lower() != 'nan':
+                            try:
+                                if isinstance(row['date_posted'], (datetime, date)):
+                                    date_str = f"\nPosted: {row['date_posted'].strftime('%Y-%m-%d')}"
+                                else:
+                                    date_str = f"\nPosted: {str(row['date_posted'])}"
+                            except Exception as e:
+                                self.logger.warning(f"Error formatting date for job {row.get('title')}: {str(e)}")
+                                date_str = ''
+                        job_lines.append(
+                            f"[**{row.get('title', 'Position Not Listed')}**](<{row.get('job_url', '#')}>) | {info_line}\n{row.get('company_industry', 'Industry Not Specified')}{date_str}\n"
+                        )
+                        # DB logic (deduplication, etc.)
+                        max_retries = 3
+                        retry_delay = 1
+                        for attempt in range(max_retries):
+                            try:
+                                query = session.query(Job).filter(
+                                    Job.application_url == row['job_url'],
+                                    Job.job_type == job_config.name
+                                ).first()
+                                if query is None:
+                                    existing_job = session.query(Job).filter(
+                                        Job.job_id == row['id']
+                                    ).first()
+                                    if existing_job is None:
+                                        new_job = Job(
+                                            job_id=row['id'],
+                                            application_url=row['job_url'],
+                                            job_title=row.get('title', 'Position Not Listed'),
+                                            company_name=row['company'],
+                                            company_url=row['company_url'],
+                                            location=row['location'],
+                                            job_type=job_config.name
+                                        )
+                                        session.add(new_job)
+                                        session.commit()
+                                    else:
+                                        if job_config.name not in existing_job.job_type:
+                                            existing_job.job_type = f"{existing_job.job_type}, {job_config.name}"
+                                            session.commit()
+                                break
+                            except OperationalError as e:
+                                if attempt < max_retries - 1:
+                                    self.logger.warning(f"Database locked, retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                                    time.sleep(retry_delay)
+                                    retry_delay *= 2
+                                    session.rollback()
+                                else:
+                                    raise
+                    # Compose the message for this batch
+                    posted_line = ''
+                    if first_row.get('date_posted') and str(first_row['date_posted']).lower() != 'nan':
+                        try:
+                            if isinstance(first_row['date_posted'], (datetime, date)):
+                                posted_line = f"\nPosted: {first_row['date_posted'].strftime('%Y-%m-%d')}"
+                            else:
+                                posted_line = f"\nPosted: {str(first_row['date_posted'])}"
+                        except Exception as e:
+                            posted_line = ''
+                    job_info = f"## {job_config.icon} [{company}](<{first_row.get('company_url', '#')}>)\n" + "\n".join(job_lines) + f"\n🔍 [Glassdoor]({company_urls['glassdoor']})\u200B · 👥 [Blind]({company_urls['blind']})\u200B · 💸 [Levels.fyi]({company_urls['levels']})\u200B\n\u200B\n"
+                    self.logger.info(f"Posting {len(batch)} jobs for {company} for {job_config.name}")
+                    await target_channel.send(job_info)
+                    await asyncio.sleep(1)
         except Exception as e:
             self.logger.error(f"Error in post_jobs: {str(e)}")
             session.rollback()
@@ -367,6 +368,30 @@ class DiscordBot(commands.Bot):
     async def close(self):
         """Clean up when the bot is shutting down"""
         await super().close()
+
+def clean_company_name(company_name: str) -> str:
+    """Clean company name by removing everything after comma or first dot"""
+    # Remove everything after comma
+    company_name = company_name.split(',')[0]
+    # Remove everything after first dot
+    company_name = company_name.split('.')[0]
+    # Strip whitespace
+    return company_name.strip()
+
+def get_company_urls(company_name: str) -> Dict[str, str]:
+    """Generate Glassdoor, Blind, and Levels.fyi URLs for a company"""
+    clean_name = clean_company_name(company_name)
+    # URL encode the company name for Glassdoor
+    glassdoor_name = urllib.parse.quote(clean_name)
+    # Convert to lowercase and replace spaces with dashes for Blind and Levels.fyi
+    blind_name = clean_name.lower().replace(' ', '-')
+    levels_name = blind_name
+    
+    return {
+        'glassdoor': f"https://www.glassdoor.com/Search/results.htm?keyword={glassdoor_name}",
+        'blind': f"https://www.teamblind.com/company/{blind_name}",
+        'levels': f"https://www.levels.fyi/companies/{levels_name}/salaries"
+    }
 
 try:
     bot = DiscordBot(run_now=args.run_now)
