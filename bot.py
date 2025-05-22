@@ -12,7 +12,7 @@ import time
 from sqlalchemy.exc import OperationalError
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import declarative_base, sessionmaker
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, UniqueConstraint
 import urllib.parse
 
 import yaml
@@ -55,13 +55,18 @@ class Job(Base):
 
     id = Column(Integer, primary_key=True)
     description = Column(String)
-    job_id = Column(String, unique=True)
+    job_id = Column(String, index=True)  # Add index for faster lookups
     application_url = Column(String)
     job_title = Column(String)
     company_name = Column(String)
     company_url = Column(String)
     location = Column(String)
     job_type = Column(String)  # To store which job config this belongs to
+
+    # Add compound unique constraint
+    __table_args__ = (
+        UniqueConstraint('job_id', 'job_type', name='uix_job_id_type'),
+    )
 
 class JobConfig:
     def __init__(self, config: Dict):
@@ -204,16 +209,58 @@ class DiscordBot(commands.Bot):
                     self.logger.info(
                         f"Skipping job {row['title']} - doesn't contain mandatory terms for {job_config.name}")
                     continue
-                company_jobs[row['company']].append(row)
+                
+                # Check if job already exists in database before adding to company_jobs
+                try:
+                    existing_job = session.query(Job).filter(
+                        Job.job_id == row['id']
+                    ).first()
+                    
+                    if existing_job:
+                        if job_config.name in existing_job.job_type:
+                            self.logger.info(f"Skipping already posted job: {row['title']} at {row['company']} for {job_config.name}")
+                            continue
+                        else:
+                            # Update job_type if this is a new config for an existing job
+                            existing_job.job_type = f"{existing_job.job_type}, {job_config.name}"
+                            session.commit()
+                            self.logger.info(f"Updated job_type for existing job: {row['title']} at {row['company']}")
+                    
+                    # Add new job to database
+                    new_job = Job(
+                        job_id=row['id'],
+                        application_url=row['job_url'],
+                        job_title=row.get('title', 'Position Not Listed'),
+                        company_name=row['company'],
+                        company_url=row['company_url'],
+                        location=row['location'],
+                        job_type=job_config.name
+                    )
+                    session.add(new_job)
+                    session.commit()
+                    self.logger.info(f"Added new job to database: {row['title']} at {row['company']}")
+                    
+                    # Only add to company_jobs if it's a new job or new config
+                    company_jobs[row['company']].append(row)
+                    
+                except OperationalError as e:
+                    self.logger.error(f"Database error while checking job {row['title']}: {str(e)}")
+                    session.rollback()
+                    continue
 
+            # Post jobs that passed deduplication
             for company, jobs_for_company in company_jobs.items():
                 # Batch jobs in groups of 5
                 for i in range(0, len(jobs_for_company), 5):
                     batch = jobs_for_company[i:i+5]
+                    if not batch:  # Skip if batch is empty
+                        continue
+                        
                     # Use the first job for company info
                     first_row = batch[0]
                     company_urls = get_company_urls(company)
                     job_lines = []
+                    
                     for row in batch:
                         # Determine remote/local status
                         is_remote = row.get('is_remote', False)
@@ -225,17 +272,19 @@ class DiscordBot(commands.Bot):
                             status.append("📍 Local")
                         if not status:
                             status.append("🏢 On-site")
+                            
                         location = row.get('location', '').strip()
                         status_str = ' | '.join(status)
+                        
                         if location:
                             if is_local:
-                                # Remove 'Local' from status_str, add '| 📍 Local' at the end
                                 status_str_clean = status_str.replace('Local', '').strip()
                                 info_line = f"{location} | 📍 Local"
                             else:
                                 info_line = f"{location} | {status_str.replace('🏢 On-site', 'On-site')}"
                         else:
                             info_line = f"{status_str.replace('🏢 On-site', 'On-site')}" if status_str.startswith('🏢 On-site') else status_str
+                            
                         # Format the date if it exists and is not NaN
                         date_str = ''
                         if row.get('date_posted') and str(row['date_posted']).lower() != 'nan':
@@ -247,47 +296,11 @@ class DiscordBot(commands.Bot):
                             except Exception as e:
                                 self.logger.warning(f"Error formatting date for job {row.get('title')}: {str(e)}")
                                 date_str = ''
+                                
                         job_lines.append(
                             f"[**{row.get('title', 'Position Not Listed')}**](<{row.get('job_url', '#')}>) | {info_line}\n{row.get('company_industry', 'Industry Not Specified')}{date_str}\n"
                         )
-                        # DB logic (deduplication, etc.)
-                        max_retries = 3
-                        retry_delay = 1
-                        for attempt in range(max_retries):
-                            try:
-                                query = session.query(Job).filter(
-                                    Job.application_url == row['job_url'],
-                                    Job.job_type == job_config.name
-                                ).first()
-                                if query is None:
-                                    existing_job = session.query(Job).filter(
-                                        Job.job_id == row['id']
-                                    ).first()
-                                    if existing_job is None:
-                                        new_job = Job(
-                                            job_id=row['id'],
-                                            application_url=row['job_url'],
-                                            job_title=row.get('title', 'Position Not Listed'),
-                                            company_name=row['company'],
-                                            company_url=row['company_url'],
-                                            location=row['location'],
-                                            job_type=job_config.name
-                                        )
-                                        session.add(new_job)
-                                        session.commit()
-                                    else:
-                                        if job_config.name not in existing_job.job_type:
-                                            existing_job.job_type = f"{existing_job.job_type}, {job_config.name}"
-                                            session.commit()
-                                break
-                            except OperationalError as e:
-                                if attempt < max_retries - 1:
-                                    self.logger.warning(f"Database locked, retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
-                                    time.sleep(retry_delay)
-                                    retry_delay *= 2
-                                    session.rollback()
-                                else:
-                                    raise
+                    
                     # Compose the message for this batch
                     posted_line = ''
                     if first_row.get('date_posted') and str(first_row['date_posted']).lower() != 'nan':
@@ -298,10 +311,12 @@ class DiscordBot(commands.Bot):
                                 posted_line = f"\nPosted: {str(first_row['date_posted'])}"
                         except Exception as e:
                             posted_line = ''
+                            
                     job_info = f"## {job_config.icon} [{company}](<{first_row.get('company_url', '#')}>)\n" + "\n".join(job_lines) + f"\n🔍 [Glassdoor]({company_urls['glassdoor']})\u200B · 👥 [Blind]({company_urls['blind']})\u200B · 💸 [Levels.fyi]({company_urls['levels']})\u200B\n\u200B\n"
                     self.logger.info(f"Posting {len(batch)} jobs for {company} for {job_config.name}")
                     await target_channel.send(job_info)
                     await asyncio.sleep(1)
+                    
         except Exception as e:
             self.logger.error(f"Error in post_jobs: {str(e)}")
             session.rollback()
