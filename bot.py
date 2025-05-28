@@ -345,7 +345,7 @@ class DiscordBot(commands.Bot):
                 continue
 
     async def get_jobs(self, sites=None, search_term='', location='United States',
-                       results_wanted=20, hours_old=72, is_remote=False):
+                       results_wanted=20, hours_old=120, is_remote=False):
         if sites is None:
             sites = ['linkedin']
         jobs = scrape_jobs(
