@@ -149,7 +149,7 @@ def get_session():
 class DiscordBot(commands.Bot):
     def __init__(self, run_now=False) -> None:
         super().__init__(
-            command_prefix=None,
+            command_prefix='!',
             intents=intents,
             help_command=None,
         )

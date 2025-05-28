@@ -3,8 +3,8 @@ Description=Job Hunter Bot Timer
 Requires=job-hunter.service
 
 [Timer]
-# Run at 9:30 AM Mountain Time
-OnCalendar=*-*-* 09:30:00
+# Run at 09:30 Denver Time on weekdays only
+OnCalendar=Mon..Fri *-*-* 09:30:00
 AccuracySec=1m
 Persistent=true
 
