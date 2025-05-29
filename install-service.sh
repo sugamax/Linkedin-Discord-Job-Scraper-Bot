@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# Remove existing virtual environment if it exists
-rm -rf venv
-
 # Copy service file to systemd directory
 sudo cp job-hunter.service /etc/systemd/system/
 
