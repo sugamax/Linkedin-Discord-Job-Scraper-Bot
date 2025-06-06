@@ -76,6 +76,7 @@ class JobConfig:
         self.mandatory_terms = config['mandatory_terms']
         self.location = config.get('location', 'United States')  # Default to United States if not specified
         self.is_remote = config.get('is_remote', False)  # Default to False if not specified
+        self.job_type = config.get('job_type', 'fulltime')  # Default to fulltime if not specified
         self.discord_channel_id = config['discord_channel_id']
         self.blacklist_companies = set(config['blacklist_companies'])
         self.current_search_index = 0
@@ -336,7 +337,8 @@ class DiscordBot(commands.Bot):
                 jobs = await self.get_jobs(
                     search_term=search_term,
                     location=job_config.location,
-                    is_remote=job_config.is_remote
+                    is_remote=job_config.is_remote,
+                    job_type=job_config.job_type
                 )
                             
                 await self.post_jobs(jobs, job_config)
@@ -345,7 +347,7 @@ class DiscordBot(commands.Bot):
                 continue
 
     async def get_jobs(self, sites=None, search_term='', location='United States',
-                       results_wanted=20, hours_old=120, is_remote=False):
+                       results_wanted=20, hours_old=1000, is_remote=False, job_type='fulltime'):
         if sites is None:
             sites = ['linkedin']
         jobs = scrape_jobs(
@@ -356,6 +358,7 @@ class DiscordBot(commands.Bot):
             hours_old=hours_old,
             is_remote=is_remote,
             linkedin_fetch_description=True,
+            job_type=job_type
         )
         return jobs
 
